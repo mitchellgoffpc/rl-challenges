@@ -22,12 +22,12 @@ def parse_args():
     # Training parameters
     parser.add_argument("--num-episodes", type=int, default=4000, help="Number of episodes to train for")
     parser.add_argument('--num-dreams', type=int, default=5, help="Number of 'dream' episodes to generate after each real episode")
-    parser.add_argument('--max-dream-length', type=int, default=20, help="Maximum number of steps per dream before encountering a reward")
+    parser.add_argument('--max-dream-length', type=int, default=30, help="Maximum number of steps per dream before encountering a reward")
     parser.add_argument("--memory-size", type=int, default=32000, help="Maximum number of transitions to store in the replay memory")
-    parser.add_argument("--batch-size", type=int, default=256, help="Number of transitions to sample per mini-batch")
+    parser.add_argument("--batch-size", type=int, default=512, help="Number of transitions to sample per mini-batch")
     parser.add_argument("--hidden-layer-size", type=int, default=128, help="Width of the agent's hidden layer")
     parser.add_argument("--learning-rate", type=float, default=0.0003, help="Optimizer learning rate")
-    parser.add_argument("--gamma", type=float, default=0.96, help="Decay factor for rewards")
+    parser.add_argument("--gamma", type=float, default=0.98, help="Decay factor for rewards")
 
     return parser.parse_args()
 
@@ -48,7 +48,7 @@ def train(flags):
         goal = torch.tensor([random.uniform(.6, .001), random.uniform(0, .01)])
         state = env.reset()
         state = torch.from_numpy(state)
-        epsilon = max(0.05, 1. - float(episode_counter) / 1200)
+        epsilon = max(0.05, 1. - float(episode_counter) / 1500)
 
         # Run an episode
         for step in count():
@@ -60,9 +60,9 @@ def train(flags):
                   action = torch.argmax(action_scores)
             else: action = torch.randint(0, OUTPUT_SIZE, ())
 
-            for _ in range(5):
+            for _ in range(2):
               next_state, reward, done, stats = env.step(action.item())
-            reward = 1 if done and step < 39 else 0
+            reward = 1 if done and step < 99 else 0
             episode.push(state, action, torch.tensor(reward), torch.tensor(done), torch.from_numpy(next_state), goal)
             state = torch.from_numpy(next_state)
 
