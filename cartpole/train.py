@@ -17,7 +17,7 @@ def parse_args():
 
     # Task parameters
     parser.add_argument("--report-interval", type=int, default=100, help="Iterations between reports")
-    parser.add_argument("--render-interval", type=int, default=100, help="Iterations between rendering episodes of the game")
+    parser.add_argument("--render-interval", type=int, default=0, help="Iterations between rendering episodes of the game")
 
     # Training parameters
     parser.add_argument("--num-episodes", type=int, default=3000, help="Number of episodes to train for")
@@ -45,10 +45,10 @@ def train(flags):
     episode_lengths, total_wins = [], 0
 
     for episode_counter in range(1, flags.num_episodes + 1):
-        goal = torch.tensor([0, 0, 0, 0])
+        goal = torch.normal(0, .01, (4,)) # torch.tensor([0, 0, 0, 0])
         state = env.reset()
         state = torch.from_numpy(state)
-        epsilon = max(0.05, 1. - 1.5 * float(episode_counter) / flags.num_episodes)
+        epsilon = max(0.05, 1. - 2 * float(episode_counter) / flags.num_episodes)
 
         # Run an episode
         for step in count():
@@ -70,6 +70,8 @@ def train(flags):
             if done:
                 if reward == 0: # We won!
                     total_wins += 1
+                    for s in episode.memory:
+                        s[-1] = state # Replace the goal state with the actual state we ended up in
                 break
 
         # Create some short 'dream' episodes where the goal state is one we actually encountered in the last episode.

@@ -9,7 +9,7 @@ class Episode:
         self.memory = []
 
     def push(self, *args):
-        self.memory.append(tuple(args))
+        self.memory.append(list(args))
 
     def stack(self):
         return map(torch.stack, zip(*self.memory))
