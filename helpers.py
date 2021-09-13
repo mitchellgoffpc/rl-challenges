@@ -56,7 +56,7 @@ class ReplayMemory:
 
     def sample(self, batch_size, normalize = False):
         sample = random.sample(self.memory, batch_size)
-        batch = map(torch.stack, zip(*sample))
+        batch = list(map(torch.stack, zip(*sample)))
         return self.normalize(batch) if normalize else batch
 
     def normalize(self, batch):
