@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=512, help="Number of transitions to sample per mini-batch")
     parser.add_argument("--hidden-layer-size", type=int, default=128, help="Width of the agent's hidden layer")
     parser.add_argument("--learning-rate", type=float, default=0.0003, help="Optimizer learning rate")
-    parser.add_argument("--gamma", type=float, default=0.98, help="Decay factor for rewards")
+    parser.add_argument("--gamma", type=float, default=0.99, help="Decay factor for rewards")
 
     return parser.parse_args()
 
@@ -48,7 +48,7 @@ def train(flags):
         goal = torch.tensor([random.uniform(.6, .001), random.uniform(0, .01)])
         state = env.reset()
         state = torch.from_numpy(state)
-        epsilon = max(0.05, 1. - float(episode_counter) / 1500)
+        epsilon = max(0.01, 1. - float(episode_counter) / 1200)
 
         # Run an episode
         for step in count():
@@ -60,9 +60,8 @@ def train(flags):
                   action = torch.argmax(action_scores)
             else: action = torch.randint(0, OUTPUT_SIZE, ())
 
-            for _ in range(2):
-              next_state, reward, done, stats = env.step(action.item())
-            reward = 1 if done and step < 99 else 0
+            next_state, reward, done, stats = env.step(action.item())
+            reward = 1 if done and step < 199 else 0
             episode.push(state, action, torch.tensor(reward), torch.tensor(done), torch.from_numpy(next_state), goal)
             state = torch.from_numpy(next_state)
 
@@ -89,7 +88,7 @@ def train(flags):
         episode_lengths.append(step + 1.)
         memory.push_episode(episode)
 
-        if len(memory) > flags.batch_size * 4:
+        if len(memory) > flags.batch_size * 8:
             optimizer.zero_grad()
             states, actions, rewards, finished, next_states, goals = memory.sample(flags.batch_size)
             with torch.no_grad():
