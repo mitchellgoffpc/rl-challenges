@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import gym
 import torch
 import random
 import argparse
@@ -7,27 +6,29 @@ from itertools import count
 from torch.distributions.categorical import Categorical
 
 from helpers import Episode, ReplayMemory
-from mountaincar.agent import MountainCarAgent
+from gridworld.agent import GridworldAgent
+from gridworld.environment import GridworldEnvironment
 
 OUTPUT_SIZE = 2
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="RL agent for solving the mountaincar environment")
+    parser = argparse.ArgumentParser(description="RL agent for solving the gridworld environment")
 
     # Task parameters
+    parser.add_argument("--grid_size", type=int, default=5, help="Iterations between reports")
     parser.add_argument("--report-interval", type=int, default=100, help="Iterations between reports")
-    parser.add_argument("--render-interval", type=int, default=0, help="Iterations between rendering episodes of the game")
 
     # Training parameters
     parser.add_argument("--num-episodes", type=int, default=4000, help="Number of episodes to train for")
-    parser.add_argument('--num-dreams', type=int, default=5, help="Number of 'dream' episodes to generate after each real episode")
-    parser.add_argument('--max-dream-length', type=int, default=30, help="Maximum number of steps per dream before encountering a reward")
-    parser.add_argument("--memory-size", type=int, default=32000, help="Maximum number of transitions to store in the replay memory")
-    parser.add_argument("--batch-size", type=int, default=512, help="Number of transitions to sample per mini-batch")
+    parser.add_argument('--max-episode-length', type=int, default=20, help="Maximum number of steps per episode")
+    parser.add_argument('--num-dreams', type=int, default=1, help="Number of 'dream' episodes to generate after each real episode")
+    parser.add_argument('--max-dream-length', type=int, default=5, help="Maximum number of steps per dream before encountering a reward")
+    parser.add_argument("--memory-size", type=int, default=16000, help="Maximum number of transitions to store in the replay memory")
+    parser.add_argument("--batch-size", type=int, default=128, help="Number of transitions to sample per mini-batch")
     parser.add_argument("--hidden-layer-size", type=int, default=128, help="Width of the agent's hidden layer")
     parser.add_argument("--learning-rate", type=float, default=0.0003, help="Optimizer learning rate")
-    parser.add_argument("--gamma", type=float, default=0.99, help="Decay factor for rewards")
+    parser.add_argument("--gamma", type=float, default=0.95, help="Decay factor for rewards")
 
     return parser.parse_args()
 
@@ -35,8 +36,8 @@ def parse_args():
 # Training
 
 def train(flags):
-    env = gym.make('MountainCar-v0')
-    agent = MountainCarAgent(flags)
+    agent = GridworldAgent(flags)
+    env = GridworldEnvironment(flags.grid_size, flags.grid_size)
     optimizer = torch.optim.Adam(agent.parameters(), lr=flags.learning_rate)
     criterion = torch.nn.SmoothL1Loss()
 
@@ -45,13 +46,12 @@ def train(flags):
     episode_lengths, total_wins = [], 0
 
     for episode_counter in range(1, flags.num_episodes + 1):
-        goal = torch.tensor([random.uniform(.6, .001), random.uniform(0, .01)])
-        state = env.reset()
-        state = torch.from_numpy(state)
+        state, goal = env.reset()
+        state, goal = torch.from_numpy(state), torch.from_numpy(goal)
         epsilon = max(0.01, 1. - float(episode_counter) / 1200)
 
         # Run an episode
-        for step in count():
+        for step in range(flags.max_episode_length):
             with torch.no_grad():
                 action_scores = agent(state[None], goal[None])
 
@@ -60,13 +60,10 @@ def train(flags):
                   action = torch.argmax(action_scores)
             else: action = torch.randint(0, OUTPUT_SIZE, ())
 
-            next_state, reward, done, stats = env.step(action.item())
-            reward = 1 if done and step < 199 else 0
+            next_state, _, reward, done = env.step(action.item())
             episode.push(state, action, torch.tensor(reward), torch.tensor(done), torch.from_numpy(next_state), goal)
             state = torch.from_numpy(next_state)
 
-            if flags.render_interval and episode_counter % flags.render_interval == 0:
-                env.render()
             if done:
                 if reward == 1: # We won!
                     total_wins += 1
