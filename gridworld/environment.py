@@ -8,8 +8,8 @@ class GridworldEnvironment:
 
     def reset(self):
         self.grid = np.zeros((self.width, self.height), dtype=np.uint8)
+        self.position = np.random.randint(self.height), np.random.randint(self.width)
         self.target = np.random.randint(self.height), np.random.randint(self.width)
-        self.position = 0, 0
         return self.render()
 
     def step(self, action):

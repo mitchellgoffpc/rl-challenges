@@ -8,7 +8,7 @@ def main(stdscr):
     env = GridworldEnvironment(5, 5)
 
     while True:
-        obs = env.reset()
+        obs, goal = env.reset()
         done = False
         while not done:
             stdscr.clear()
@@ -18,6 +18,11 @@ def main(stdscr):
             c = stdscr.getch()
             a = ACTIONS.get(chr(c))
             if a is not None:
-                obs = env.step(a)
+                obs, _, _, done = env.step(a)
+
+        stdscr.addstr("\nYay, you won! Press q to restart.")
+        stdscr.refresh()
+        while chr(stdscr.getch()) != 'q':
+            pass
 
 wrapper(main)
