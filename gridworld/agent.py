@@ -13,7 +13,8 @@ class GridworldAgent(nn.Module):
         self.output = nn.Linear(flags.hidden_layer_size // 2, OUTPUT_SIZE)
 
     def forward(self, inputs, goals):
-        x = torch.cat([inputs.flatten(start_dim=1).float(), goals.flatten(start_dim=1).float()], -1)
+        x = torch.stack([inputs.float(), goals.float()], dim=-1)
+        x = x.flatten(start_dim=1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        return self.output(x)
+        return F.softmax(self.output(x), dim=-1)
