@@ -21,14 +21,14 @@ def parse_args():
 
     # Training parameters
     parser.add_argument("--num-episodes", type=int, default=4000, help="Number of episodes to train for")
-    parser.add_argument('--max-episode-length', type=int, default=20, help="Maximum number of steps per episode")
+    parser.add_argument('--max-episode-length', type=int, default=30, help="Maximum number of steps per episode")
     parser.add_argument('--num-dreams', type=int, default=0, help="Number of 'dream' episodes to generate after each real episode")
     parser.add_argument('--max-dream-length', type=int, default=5, help="Maximum number of steps per dream before encountering a reward")
-    parser.add_argument("--memory-size", type=int, default=16000, help="Maximum number of transitions to store in the replay memory")
-    parser.add_argument("--batch-size", type=int, default=128, help="Number of transitions to sample per mini-batch")
+    parser.add_argument("--memory-size", type=int, default=8000, help="Maximum number of transitions to store in the replay memory")
+    parser.add_argument("--batch-size", type=int, default=512, help="Number of transitions to sample per mini-batch")
     parser.add_argument("--hidden-layer-size", type=int, default=128, help="Width of the agent's hidden layer")
     parser.add_argument("--learning-rate", type=float, default=0.0003, help="Optimizer learning rate")
-    parser.add_argument("--gamma", type=float, default=0.95, help="Decay factor for rewards")
+    parser.add_argument("--gamma", type=float, default=0.9, help="Decay factor for rewards")
     parser.add_argument("--epsilon", type=float, default=0.1, help="Clip factor for policy gradients")
 
     return parser.parse_args()
