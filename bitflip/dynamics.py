@@ -22,7 +22,7 @@ class Encoder(nn.Module):
         self.fc2 = nn.Linear(hidden_size, hidden_size)
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc1(x.float()))
         return self.fc2(x)
 
 class Decoder(nn.Module):
@@ -32,19 +32,19 @@ class Decoder(nn.Module):
         self.fc2 = nn.Linear(hidden_size, bit_length)
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc1(x.float()))
         return self.fc2(x)
 
 class Dynamics(nn.Module):
     def __init__(self, hidden_size, bit_length):
         super().__init__()
-        self.fc1 = nn.Linear(hidden_size + bit_length, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.embeddings = nn.Embedding(bit_length, hidden_size)
+        self.gru = nn.GRU(hidden_size, hidden_size, batch_first=True)
 
-    def forward(self, states, actions):
-        x = torch.cat([states, actions], dim=1)
-        x = F.relu(self.fc1(x))
-        return self.fc2(x)
+    def forward(self, actions, hidden_state):
+        inputs = F.relu(self.embeddings(actions))
+        outputs, _ = self.gru(inputs, hidden_state[None])
+        return outputs
 
 class ReplayBuffer():
     def __init__(self, max_size):
@@ -57,6 +57,10 @@ class ReplayBuffer():
         else:
             self.samples[random.randint(0, self.max_size - 1)] = args
 
+    def push_episode(self, episode):
+        if len(episode) > 0:
+            self.push(*[torch.stack([step[i] for step in episode]) for i in range(len(episode[0]))])
+
     def sample(self, batch_size):
         sample = np.random.choice(len(self), size=batch_size, replace=False)
         return [torch.stack([self.samples[i][j] for i in sample]) for j in range(len(self.samples[0]))]
@@ -66,57 +70,56 @@ class ReplayBuffer():
 
 
 # Training loop
+
 bit_length = 32
 hidden_size = 64
 batch_size = 64
-report_every = 1024
-train_every = 16
-steps = report_every / train_every
+report_every = 25
 
 encoder = Encoder(hidden_size, bit_length)
 decoder = Decoder(hidden_size, bit_length)
 dynamics = Dynamics(hidden_size, bit_length)
 optimizer = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()) + list(dynamics.parameters()), lr=0.0003)
 
-replay_buffer = ReplayBuffer(2048)
-old_state = binary_encode(bit_length, torch.randint(0, 2 ** bit_length, ()))
+replay_buffer = ReplayBuffer(1024)
+decoder_errors, dynamics_errors, decoder_old_accuracies, decoder_new_accuracies = [], [], [], []
 
-dynamics_error = 0
-decoder_error = 0
-decoder_old_accuracy = 0
-decoder_new_accuracy = 0
+for episode_counter in range(1000):
+    episode = []
+    old_state = binary_encode(bit_length, torch.randint(0, 2 ** bit_length, ()))
+    for step in range(8):
+        action = torch.randint(0, bit_length, ())
+        new_state = flip_bits(old_state, action)
+        episode.append((old_state, action, new_state))
+        old_state = new_state
+    replay_buffer.push_episode(episode)
 
-for step in range(100000):
-    action = torch.randint(0, bit_length, ())
-    new_state = flip_bits(old_state, action)
-    replay_buffer.push(old_state.float(), F.one_hot(action, bit_length).float(), new_state.float())
-    old_state = new_state
+    if len(replay_buffer) > batch_size:
+        for _ in range(8):
+            old_states, actions, new_states = replay_buffer.sample(batch_size)
+            old_features = encoder(old_states)
+            new_features = encoder(new_states)
+            new_feature_preds = dynamics(actions, old_features[:,0])
+            old_state_preds = decoder(old_features)
+            new_state_preds = decoder(new_features)
 
-    if len(replay_buffer) > batch_size and (step - 1) % train_every == 0:
-        old_states, actions, new_states = replay_buffer.sample(batch_size)
-        old_features = encoder(old_states)
-        new_features = encoder(new_states)
-        new_feature_preds = dynamics(old_features, actions)
-        old_state_preds = decoder(old_features)
-        new_state_preds = decoder(new_features)
+            dynamics_loss = F.mse_loss(new_feature_preds, new_features)
+            decoder_loss = F.mse_loss(old_state_preds, old_states.float())
+            loss = dynamics_loss + decoder_loss
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
 
-        dynamics_loss = F.mse_loss(new_feature_preds, new_features)
-        decoder_loss = F.mse_loss(old_state_preds, old_states)
-        loss = dynamics_loss + decoder_loss
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
+            dynamics_errors.append(dynamics_loss.item())
+            decoder_errors.append(decoder_loss.item())
+            decoder_old_accuracies.append((old_state_preds.detach().round() == old_states).float().mean())
+            decoder_new_accuracies.append((new_state_preds.detach().round() == new_states).float().mean())
 
-        dynamics_error += dynamics_loss.item() / steps
-        decoder_error += decoder_loss.item() / steps
-        decoder_old_accuracy += (old_state_preds.detach().round() == old_states).float().mean() / steps
-        decoder_new_accuracy += (new_state_preds.detach().round() == new_states).float().mean() / steps
+    if episode_counter % report_every == 0:
+        print(f"Episode {episode_counter:<4} | "
+              f"Dynamics error: {np.mean(dynamics_errors):.4f} | "
+              f"Decoder error: {np.mean(decoder_errors):.4f} | "
+              f"Decoder accuracy: {np.mean(decoder_old_accuracies)*100:.3f}% | "
+              f"Dynamics + Decoder accuracy: {np.mean(decoder_new_accuracies)*100:.3f}%")
 
-    if (step - 1) % report_every == 0:
-        print(f"Dynamics error: {dynamics_error:.4f} | Decoder error: {decoder_error:.4f} | "
-              f"Decoder accuracy: {decoder_old_accuracy*100:.4f}% | Dynamics + Decoder accuracy: {decoder_new_accuracy*100:.4f}%")
-
-        dynamics_error = 0
-        decoder_error = 0
-        decoder_old_accuracy = 0
-        decoder_new_accuracy = 0
+        decoder_errors, dynamics_errors, decoder_old_accuracies, decoder_new_accuracies = [], [], [], []
