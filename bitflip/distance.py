@@ -10,7 +10,9 @@ import torch.nn.functional as F
 
 def flip_bits(state, action):
     next_state = state.clone()
-    next_state[action] = not next_state[action]
+    if state.ndim == 1:
+          next_state[action] = not next_state[action]
+    else: next_state[torch.arange(len(next_state)), action] = ~next_state[torch.arange(len(next_state)), action]
     return next_state
 
 def binary_encode(bit_length, i):
@@ -91,6 +93,7 @@ dynamics_bs = 64
 report_every = 1000
 num_episodes = 20000
 max_episode_length = bit_length * 2
+max_dream_length = 2
 
 agent = DistanceModel(agent_hidden_size, dynamics_hidden_size, bit_length)
 agent_optimizer = torch.optim.Adam(agent.parameters(), lr=0.0003)
@@ -102,8 +105,7 @@ dynamics_optimizer = torch.optim.Adam(list(encoder.parameters()) + list(decoder.
 
 agent_replay_buffer = ReplayBuffer(16000)
 dynamics_replay_buffer = ReplayBuffer(1024)
-# dream_replay_buffer = ReplayBuffer(1024) # Keep the features fresh
-real_wins, dream_wins, episode_lengths = 0, 0, []
+real_wins, dream_wins, dreams, episode_lengths = 0, 0, 0, []
 decoder_errors, dynamics_errors, dynamics_accuracies = [], [], []
 rolling_dynamics_accuracy = 0.0
 last_report = time.time()
@@ -113,7 +115,7 @@ last_report = time.time()
 
 for episode_counter in range(1, num_episodes + 1):
     state, goal = build_example(bit_length), build_example(bit_length)
-    epsilon = max(0.05, 1. - 1.5 * float(episode_counter) / num_episodes)
+    epsilon = max(0.00, 1. - 3 * float(episode_counter) / num_episodes)
     with torch.no_grad():
         goal_features = encoder(goal[None])
 
@@ -146,38 +148,9 @@ for episode_counter in range(1, num_episodes + 1):
             for j in range(len(episode[0]))]
         dynamics_replay_buffer.push(*columns, mask)
 
-    # # Play a dream episode
-    # goal = state = build_example(bit_length)
-    # with torch.no_grad():
-    #     features = goal_features = encoder(state[None])
-    #     for _ in range(2):
-    #         action =  torch.randint(0, bit_length, ())
-    #         goal = flip_bits(goal, action)
-    #         goal_features = dynamics(goal_features, action[None])
-    #
-    # for step in range(bit_length * 2):
-    #     with torch.no_grad():
-    #         distances = agent(features, goal_features)
-    #
-    #     # Epsilon-greedy exploration strategy
-    #     if torch.rand(()) > epsilon:
-    #           action = torch.argmin(distances)
-    #     else: action = torch.randint(0, bit_length, ())
-    #
-    #     with torch.no_grad():
-    #         next_state = flip_bits(state, action)
-    #         next_features = dynamics(features, action[None])
-    #     dream_replay_buffer.push(features[0], goal_features[0], action, next_features[0], torch.tensor(False))
-    #     dream_replay_buffer.push(features[0], next_features[0], action, next_features[0], torch.tensor(True))
-    #     state = next_state
-    #     features = next_features
-    #     # if distances.min() < 1:
-    #     if torch.all(torch.eq(next_state, goal)):
-    #         dream_wins += 1
-    #         break
 
     # Train the agent on real episodes
-    if len(agent_replay_buffer) > agent_bs: # * 4:
+    if len(agent_replay_buffer) > agent_bs:
         states, goals, actions, next_states, finished = agent_replay_buffer.sample(agent_bs)
 
         with torch.no_grad():
@@ -190,24 +163,56 @@ for episode_counter in range(1, num_episodes + 1):
         agent_optimizer.step()
         agent_optimizer.zero_grad()
 
-    # # Train the agent on dream episodes
-    # if len(dream_replay_buffer) > agent_bs:
-    #     dream_features, dream_goal_features, dream_actions, dream_next_features, dream_finished = dream_replay_buffer.sample(agent_bs)
-    #
-    #     with torch.no_grad():
-    #         best_future_distances = torch.clip(agent(dream_next_features, dream_goal_features).min(dim=1).values * ~dream_finished, 0, bit_length)
-    #     distances = agent(dream_features, dream_goal_features)[torch.arange(len(actions)), actions]
-    #     loss = F.smooth_l1_loss(distances, best_future_distances + 1)
-    #     loss.backward()
-    #
-    #     agent_optimizer.step()
-    #     agent_optimizer.zero_grad()
+    # Train the agent on dream episodes
+    if len(agent_replay_buffer) > agent_bs:
+        states, _, _, _, _ = agent_replay_buffer.sample(agent_bs)
+        with torch.no_grad():
+            features = encoder(states)
+
+        # Single-step
+        with torch.no_grad():
+            actions = torch.randint(0, bit_length, (len(states),))
+            goal_features = dynamics(actions[:,None], features)[:,0]
+        distances = agent(features, goal_features)
+        loss = F.smooth_l1_loss(distances[torch.arange(len(actions)), actions], torch.ones(len(actions)))
+        loss.backward()
+
+        # Multi-step
+        with torch.no_grad():
+            goals, goal_features = states, features
+            # lengths = torch.randint(1, max_dream_length+1, (len(states),))
+            for i in range(max_dream_length):
+                actions = torch.randint(0, bit_length, (len(goals),))
+                goal_features = dynamics(actions[:,None], goal_features)[:,0]
+                goals = flip_bits(goals, actions)
+                # goal_features = torch.where(i < lengths[:,None], dynamics(actions[:,None], goal_features)[:,0], goal_features)
+                # goals = torch.where(i < lengths[:,None], flip_bits(goals, actions), goals)
+
+        finished = torch.zeros(len(features)).bool()
+        for i in range(max_dream_length):
+            distances = agent(features, goal_features)
+            actions = torch.where(
+                torch.rand((len(states),)) > epsilon,
+                torch.argmin(distances, dim=1),
+                torch.randint(0, bit_length, (len(states),)))
+            states = flip_bits(states, actions)
+            finished = finished | torch.all(states == goals, dim=1)
+            with torch.no_grad():
+                features = dynamics(actions[:,None], features)[:,0]
+                best_future_distances = torch.clip(agent(features, goal_features).min(dim=1).values * ~finished, 0, max_dream_length+1)
+            loss = F.smooth_l1_loss(distances[torch.arange(len(actions)), actions], best_future_distances + 1)
+            loss.backward()
+
+        agent_optimizer.step()
+        agent_optimizer.zero_grad()
+        dream_wins += finished.sum()
+        dreams += len(finished)
 
     # Train the dynamics model
     if len(dynamics_replay_buffer) > dynamics_bs:
         if rolling_dynamics_accuracy < .999:
               dynamics_updates = 8
-        elif np.random.uniform() < 0.05:
+        elif np.random.uniform() < 0.01:
               dynamics_updates = 1
         else: dynamics_updates = 0
 
@@ -237,12 +242,12 @@ for episode_counter in range(1, num_episodes + 1):
         print(f"Episode {episode_counter:<5} | "
               f"Epsilon: {epsilon:<4.2f} | "
               f"Real Wins: {real_wins:>4} / {report_every} | "
-              f"Dream Wins: {dream_wins:>4} / {report_every} | "
+              f"Dream Wins: {dream_wins:>4} / {dreams} | "
               f"Avg Episode Length: {np.mean(episode_lengths):.2f} | "
               f"Decoder error: {np.mean(decoder_errors):<6.4f} | "
               f"Dynamics error: {np.mean(dynamics_errors):<6.4f} | "
               f"Dynamics accuracy: {np.mean(dynamics_accuracies)*100:>6.2f}% | "
               f"Time Taken: {time.time() - last_report:.2f}s")
-        real_wins, dream_wins, episode_lengths = 0, 0, []
+        real_wins, dream_wins, dreams, episode_lengths = 0, 0, 0, []
         decoder_errors, dynamics_errors, dynamics_accuracies = [], [], []
         last_report = time.time()
