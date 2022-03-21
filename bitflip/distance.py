@@ -95,7 +95,7 @@ dynamics_bs = 64
 report_every = 1000
 num_episodes = 20000
 max_episode_length = bit_length * 2
-max_dream_length = 3
+max_dream_length = 4
 
 agent = DistanceModel(agent_hidden_size, dynamics_hidden_size, bit_length)
 agent_optimizer = torch.optim.Adam(agent.parameters(), lr=0.0003)
@@ -111,13 +111,12 @@ real_wins, dream_wins, dreams, episode_lengths = 0, 0, 0, []
 decoder_errors, dynamics_errors, dynamics_accuracies = [], [], []
 rolling_dynamics_error = 1.0
 last_report = time.time()
-epsilon = 1.0
 
 
 # Training loop
 
 for episode_counter in range(1, num_episodes + 1):
-    epsilon = max(0.00, 1. - 4 * float(episode_counter) / num_episodes)
+    epsilon = max(0.00, 1. - 3 * float(episode_counter) / num_episodes)
 
     # Play an episode
     episode = []
@@ -174,23 +173,20 @@ for episode_counter in range(1, num_episodes + 1):
             features = encoder(states)
 
         # Single-step
-        # with torch.no_grad():
-        #     actions = torch.randint(0, bit_length, (len(states),))
-        #     goal_features = dynamics(actions[:,None], features)[:,0]
-        # distances = agent(features, goal_features)
-        # loss = F.smooth_l1_loss(distances[torch.arange(len(actions)), actions], torch.ones(len(actions)))
-        # loss.backward()
+        with torch.no_grad():
+            actions = torch.randint(0, bit_length, (len(states),))
+            goal_features = dynamics(actions[:,None], features)[:,0]
+        distances = agent(features, goal_features)
+        loss = F.smooth_l1_loss(distances[torch.arange(len(actions)), actions], torch.ones(len(actions)))
+        loss.backward()
 
         # Multi-step
         with torch.no_grad():
             goals, goal_features = states, features
-            # lengths = torch.randint(1, max_dream_length+1, (len(states),))
             for i in range(max_dream_length):
                 actions = torch.randint(0, bit_length, (len(goals),))
                 goal_features = dynamics(actions[:,None], goal_features)[:,0]
                 goals = flip_bits(goals, actions)
-                # goal_features = torch.where(i < lengths[:,None], dynamics(actions[:,None], goal_features)[:,0], goal_features)
-                # goals = torch.where(i < lengths[:,None], flip_bits(goals, actions), goals)
 
         finished = torch.zeros(len(features)).bool()
         for i in range(max_dream_length):
@@ -199,15 +195,12 @@ for episode_counter in range(1, num_episodes + 1):
                 torch.rand((len(states),)) > epsilon,
                 torch.argmin(distances, dim=1),
                 torch.randint(0, bit_length, (len(states),)))
-            old_states = states
             states = torch.where(finished[:,None], states, flip_bits(states, actions))
             finished = finished | torch.all(states == goals, dim=1)
             with torch.no_grad():
                 features = torch.where(finished[:,None], features, dynamics(actions[:,None], features)[:,0])
-                # best_future_distances = torch.clip(agent(features, goal_features).min(dim=1).values * ~finished, 0, max_dream_length+1)
-            targets = torch.sum(old_states != goals, dim=1)[:,None] + torch.where(old_states == goals, 1, -1)
-            loss = F.smooth_l1_loss(distances, targets.float())
-            # loss = F.smooth_l1_loss(distances[torch.arange(len(actions)), actions], best_future_distances + 1)
+                best_future_distances = torch.clip(agent(features, goal_features).min(dim=1).values * ~finished, 0, max_dream_length+1)
+            loss = F.smooth_l1_loss(distances[torch.arange(len(actions)), actions], best_future_distances + 1)
             loss.backward()
 
         agent_optimizer.step()
@@ -251,8 +244,8 @@ for episode_counter in range(1, num_episodes + 1):
               f"Real Wins: {real_wins:>4} / {report_every} | "
               f"Dream Wins: {dream_wins:>4} / {dreams} | "
               f"Avg Episode Length: {np.mean(episode_lengths):.2f} | "
-              f"Decoder error: {np.mean(decoder_errors):<6.4f} | "
-              f"Dynamics error: {np.mean(dynamics_errors):<6.4f} | "
+              f"Decoder error: {np.mean(decoder_errors):<6.5f} | "
+              f"Dynamics error: {np.mean(dynamics_errors):<6.5f} | "
               f"Dynamics accuracy: {np.mean(dynamics_accuracies)*100:>6.2f}% | "
               f"Time Taken: {time.time() - last_report:.2f}s")
         real_wins, dream_wins, dreams, episode_lengths = 0, 0, 0, []
