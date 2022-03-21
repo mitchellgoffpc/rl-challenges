@@ -4,6 +4,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import warnings
+warnings.simplefilter("ignore") # silence 'mean of empty slice' warning
 
 
 # Helper functions
@@ -93,7 +95,7 @@ dynamics_bs = 64
 report_every = 1000
 num_episodes = 20000
 max_episode_length = bit_length * 2
-max_dream_length = 2
+max_dream_length = 3
 
 agent = DistanceModel(agent_hidden_size, dynamics_hidden_size, bit_length)
 agent_optimizer = torch.optim.Adam(agent.parameters(), lr=0.0003)
@@ -107,20 +109,22 @@ agent_replay_buffer = ReplayBuffer(16000)
 dynamics_replay_buffer = ReplayBuffer(1024)
 real_wins, dream_wins, dreams, episode_lengths = 0, 0, 0, []
 decoder_errors, dynamics_errors, dynamics_accuracies = [], [], []
-rolling_dynamics_accuracy = 0.0
+rolling_dynamics_error = 1.0
 last_report = time.time()
+epsilon = 1.0
 
 
 # Training loop
 
 for episode_counter in range(1, num_episodes + 1):
-    state, goal = build_example(bit_length), build_example(bit_length)
-    epsilon = max(0.00, 1. - 3 * float(episode_counter) / num_episodes)
-    with torch.no_grad():
-        goal_features = encoder(goal[None])
+    epsilon = max(0.00, 1. - 4 * float(episode_counter) / num_episodes)
 
     # Play an episode
     episode = []
+    with torch.no_grad():
+        state, goal = build_example(bit_length), build_example(bit_length)
+        goal_features = encoder(goal[None])
+
     for step in range(max_episode_length):
         with torch.no_grad():
             distances = agent(encoder(state[None]), goal_features)
@@ -150,18 +154,18 @@ for episode_counter in range(1, num_episodes + 1):
 
 
     # Train the agent on real episodes
-    if len(agent_replay_buffer) > agent_bs:
-        states, goals, actions, next_states, finished = agent_replay_buffer.sample(agent_bs)
-
-        with torch.no_grad():
-            features, next_features, goal_features = encoder(states), encoder(next_states), encoder(goals)
-            best_future_distances = torch.clip(agent(next_features, goal_features).min(dim=1).values * ~finished, 0, bit_length)
-        distances = agent(features, goal_features)[torch.arange(len(actions)), actions]
-        loss = F.smooth_l1_loss(distances, best_future_distances + 1)
-        loss.backward()
-
-        agent_optimizer.step()
-        agent_optimizer.zero_grad()
+    # if len(agent_replay_buffer) > agent_bs:
+    #     states, goals, actions, next_states, finished = agent_replay_buffer.sample(agent_bs)
+    #
+    #     with torch.no_grad():
+    #         features, next_features, goal_features = encoder(states), encoder(next_states), encoder(goals)
+    #         best_future_distances = torch.clip(agent(next_features, goal_features).min(dim=1).values * ~finished, 0, bit_length)
+    #     distances = agent(features, goal_features)[torch.arange(len(actions)), actions]
+    #     loss = F.smooth_l1_loss(distances, best_future_distances + 1)
+    #     loss.backward()
+    #
+    #     agent_optimizer.step()
+    #     agent_optimizer.zero_grad()
 
     # Train the agent on dream episodes
     if len(agent_replay_buffer) > agent_bs:
@@ -170,12 +174,12 @@ for episode_counter in range(1, num_episodes + 1):
             features = encoder(states)
 
         # Single-step
-        with torch.no_grad():
-            actions = torch.randint(0, bit_length, (len(states),))
-            goal_features = dynamics(actions[:,None], features)[:,0]
-        distances = agent(features, goal_features)
-        loss = F.smooth_l1_loss(distances[torch.arange(len(actions)), actions], torch.ones(len(actions)))
-        loss.backward()
+        # with torch.no_grad():
+        #     actions = torch.randint(0, bit_length, (len(states),))
+        #     goal_features = dynamics(actions[:,None], features)[:,0]
+        # distances = agent(features, goal_features)
+        # loss = F.smooth_l1_loss(distances[torch.arange(len(actions)), actions], torch.ones(len(actions)))
+        # loss.backward()
 
         # Multi-step
         with torch.no_grad():
@@ -195,12 +199,15 @@ for episode_counter in range(1, num_episodes + 1):
                 torch.rand((len(states),)) > epsilon,
                 torch.argmin(distances, dim=1),
                 torch.randint(0, bit_length, (len(states),)))
-            states = flip_bits(states, actions)
+            old_states = states
+            states = torch.where(finished[:,None], states, flip_bits(states, actions))
             finished = finished | torch.all(states == goals, dim=1)
             with torch.no_grad():
-                features = dynamics(actions[:,None], features)[:,0]
-                best_future_distances = torch.clip(agent(features, goal_features).min(dim=1).values * ~finished, 0, max_dream_length+1)
-            loss = F.smooth_l1_loss(distances[torch.arange(len(actions)), actions], best_future_distances + 1)
+                features = torch.where(finished[:,None], features, dynamics(actions[:,None], features)[:,0])
+                # best_future_distances = torch.clip(agent(features, goal_features).min(dim=1).values * ~finished, 0, max_dream_length+1)
+            targets = torch.sum(old_states != goals, dim=1)[:,None] + torch.where(old_states == goals, 1, -1)
+            loss = F.smooth_l1_loss(distances, targets.float())
+            # loss = F.smooth_l1_loss(distances[torch.arange(len(actions)), actions], best_future_distances + 1)
             loss.backward()
 
         agent_optimizer.step()
@@ -210,9 +217,9 @@ for episode_counter in range(1, num_episodes + 1):
 
     # Train the dynamics model
     if len(dynamics_replay_buffer) > dynamics_bs:
-        if rolling_dynamics_accuracy < .999:
+        if rolling_dynamics_error > .0001:
               dynamics_updates = 8
-        elif np.random.uniform() < 0.01:
+        elif rolling_dynamics_error > .00005:
               dynamics_updates = 1
         else: dynamics_updates = 0
 
@@ -225,14 +232,14 @@ for episode_counter in range(1, num_episodes + 1):
             next_state_preds = decoder(next_features)
 
             dynamics_loss = F.mse_loss(next_feature_preds[mask], next_features[mask])
-            decoder_loss = F.mse_loss(state_preds[mask], states[mask].float())
+            decoder_loss = F.mse_loss(state_preds[mask], states[mask].float()) + F.mse_loss(next_state_preds[mask], next_states[mask].float())
             loss = dynamics_loss + decoder_loss
             loss.backward()
             dynamics_optimizer.step()
             dynamics_optimizer.zero_grad()
 
             accuracy = (next_state_preds.detach().round() == next_states).float().mean()
-            rolling_dynamics_accuracy = .95 * rolling_dynamics_accuracy + .05 * accuracy
+            rolling_dynamics_error = .95 * rolling_dynamics_error + .05 * dynamics_loss.item()
             decoder_errors.append(decoder_loss.item())
             dynamics_errors.append(dynamics_loss.item())
             dynamics_accuracies.append(accuracy)
