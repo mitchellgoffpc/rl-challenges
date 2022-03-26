@@ -2,9 +2,9 @@ import time
 import random
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import warnings
+from models import BitflipAgent, Encoder, Decoder, Dynamics
 warnings.simplefilter("ignore") # silence 'mean of empty slice' warning
 
 
@@ -23,50 +23,6 @@ def binary_encode(bit_length, i):
 def build_example(bit_length):
     return binary_encode(bit_length, torch.randint(0, 2 ** bit_length, ()))
 
-
-class DistanceModel(nn.Module):
-    def __init__(self, hidden_size, feature_size, bit_length):
-        super().__init__()
-        self.fc1 = nn.Linear(feature_size * 2, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc3 = nn.Linear(hidden_size // 2, bit_length)
-
-    def forward(self, inputs, goals):
-        input = torch.cat((inputs, goals), dim=1).float()
-        x = F.relu(self.fc1(input))
-        x = F.relu(self.fc2(x))
-        return self.fc3(x)
-
-class Encoder(nn.Module):
-    def __init__(self, hidden_size, bit_length):
-        super().__init__()
-        self.fc1 = nn.Linear(bit_length, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-
-    def forward(self, x):
-        x = F.relu(self.fc1(x.float()))
-        return self.fc2(x)
-
-class Decoder(nn.Module):
-    def __init__(self, hidden_size, bit_length):
-        super().__init__()
-        self.fc1 = nn.Linear(hidden_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, bit_length)
-
-    def forward(self, x):
-        x = F.relu(self.fc1(x.float()))
-        return self.fc2(x)
-
-class Dynamics(nn.Module):
-    def __init__(self, hidden_size, bit_length):
-        super().__init__()
-        self.embeddings = nn.Embedding(bit_length, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size, batch_first=True)
-
-    def forward(self, actions, hidden_state):
-        inputs = F.relu(self.embeddings(actions))
-        outputs, _ = self.gru(inputs, hidden_state[None])
-        return outputs
 
 class ReplayBuffer():
     def __init__(self, max_size):
@@ -97,7 +53,7 @@ num_episodes = 20000
 max_episode_length = bit_length * 2
 max_dream_length = 4
 
-agent = DistanceModel(agent_hidden_size, dynamics_hidden_size, bit_length)
+agent = BitflipAgent(agent_hidden_size, dynamics_hidden_size, bit_length)
 agent_optimizer = torch.optim.Adam(agent.parameters(), lr=0.0003)
 
 encoder = Encoder(dynamics_hidden_size, bit_length)

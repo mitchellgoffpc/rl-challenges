@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from models import Encoder, Decoder, Dynamics
 from tqdm import trange
 
 
@@ -14,37 +15,6 @@ def flip_bits(state, action):
 def binary_encode(bit_length, state):
     return torch.tensor([state >> i & 1 for i in range(bit_length)], dtype=torch.bool)
 
-
-class Encoder(nn.Module):
-    def __init__(self, hidden_size, bit_length):
-        super().__init__()
-        self.fc1 = nn.Linear(bit_length, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-
-    def forward(self, x):
-        x = F.relu(self.fc1(x.float()))
-        return self.fc2(x)
-
-class Decoder(nn.Module):
-    def __init__(self, hidden_size, bit_length):
-        super().__init__()
-        self.fc1 = nn.Linear(hidden_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, bit_length)
-
-    def forward(self, x):
-        x = F.relu(self.fc1(x.float()))
-        return self.fc2(x)
-
-class Dynamics(nn.Module):
-    def __init__(self, hidden_size, bit_length):
-        super().__init__()
-        self.embeddings = nn.Embedding(bit_length, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size, batch_first=True)
-
-    def forward(self, actions, hidden_state):
-        inputs = F.relu(self.embeddings(actions))
-        outputs, _ = self.gru(inputs, hidden_state[None])
-        return outputs
 
 class ReplayBuffer():
     def __init__(self, max_size):
