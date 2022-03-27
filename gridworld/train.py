@@ -6,7 +6,7 @@ from itertools import count
 from torch.distributions.categorical import Categorical
 
 from helpers import Episode, ReplayMemory
-from gridworld.agent import GridworldAgent
+from gridworld.models import GridworldAgent
 from gridworld.environment import GridworldEnvironment
 
 OUTPUT_SIZE = 2
@@ -14,12 +14,7 @@ OUTPUT_SIZE = 2
 
 def parse_args():
     parser = argparse.ArgumentParser(description="RL agent for solving the gridworld environment")
-
-    # Task parameters
     parser.add_argument("--grid_size", type=int, default=5, help="Iterations between reports")
-    parser.add_argument("--report-interval", type=int, default=100, help="Iterations between reports")
-
-    # Training parameters
     parser.add_argument("--num-episodes", type=int, default=4000, help="Number of episodes to train for")
     parser.add_argument('--max-episode-length', type=int, default=30, help="Maximum number of steps per episode")
     parser.add_argument('--num-dreams', type=int, default=0, help="Number of 'dream' episodes to generate after each real episode")
@@ -29,7 +24,7 @@ def parse_args():
     parser.add_argument("--hidden-layer-size", type=int, default=128, help="Width of the agent's hidden layer")
     parser.add_argument("--learning-rate", type=float, default=0.0003, help="Optimizer learning rate")
     parser.add_argument("--gamma", type=float, default=0.9, help="Decay factor for rewards")
-
+    parser.add_argument("--report-interval", type=int, default=100, help="Iterations between reports")
     return parser.parse_args()
 
 

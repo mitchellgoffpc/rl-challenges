@@ -7,19 +7,13 @@ from itertools import count
 from torch.distributions.categorical import Categorical
 
 from helpers import Episode, ReplayMemory
-from cartpole.agent import CartPoleAgent
+from cartpole.models import CartPoleAgent
 
 OUTPUT_SIZE = 2
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="RL agent for solving the cartpole environment")
-
-    # Task parameters
-    parser.add_argument("--report-interval", type=int, default=100, help="Iterations between reports")
-    parser.add_argument("--render-interval", type=int, default=0, help="Iterations between rendering episodes of the game")
-
-    # Training parameters
     parser.add_argument("--num-episodes", type=int, default=3000, help="Number of episodes to train for")
     parser.add_argument('--num-dreams', type=int, default=5, help="Number of 'dream' episodes to generate after each real episode")
     parser.add_argument('--max-dream-length', type=int, default=10, help="Maximum number of steps per dream before encountering a reward")
@@ -27,8 +21,9 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=256, help="Number of transitions to sample per mini-batch")
     parser.add_argument("--hidden-layer-size", type=int, default=64, help="Width of the agent's hidden layer")
     parser.add_argument("--learning-rate", type=float, default=0.0003, help="Optimizer learning rate")
-    parser.add_argument("--gamma", type=float, default=0.9, help="Decay factor for rewards")
-
+    parser.add_argument("--gamma", type=float, default=0.8, help="Decay factor for rewards")
+    parser.add_argument("--report-interval", type=int, default=100, help="Iterations between reports")
+    parser.add_argument("--render-interval", type=int, default=0, help="Iterations between rendering episodes of the game")
     return parser.parse_args()
 
 
@@ -48,7 +43,7 @@ def train(flags):
         goal = torch.normal(0, .01, (4,)) # torch.tensor([0, 0, 0, 0])
         state = env.reset()
         state = torch.from_numpy(state)
-        epsilon = max(0.05, 1. - 2 * float(episode_counter) / flags.num_episodes)
+        epsilon = max(0.05, 1. - 1.5 * float(episode_counter) / flags.num_episodes)
 
         # Run an episode
         for step in count():
