@@ -1,46 +1,12 @@
 import time
-import random
 import numpy as np
 import torch
 import torch.nn.functional as F
 import warnings
-from models import BitflipAgent, Encoder, Decoder, Dynamics
+from helpers import ReplayBuffer
+from bitflip.models import BitflipAgent, Encoder, Decoder, Dynamics
+from bitflip.environment import build_example, flip_bits
 warnings.simplefilter("ignore") # silence 'mean of empty slice' warning
-
-
-# Helper functions
-
-def flip_bits(state, action):
-    next_state = state.clone()
-    if state.ndim == 1:
-          next_state[action] = not next_state[action]
-    else: next_state[torch.arange(len(next_state)), action] = ~next_state[torch.arange(len(next_state)), action]
-    return next_state
-
-def binary_encode(bit_length, i):
-    return torch.tensor([i >> j & 1 for j in range(bit_length)], dtype=torch.bool)
-
-def build_example(bit_length):
-    return binary_encode(bit_length, torch.randint(0, 2 ** bit_length, ()))
-
-
-class ReplayBuffer():
-    def __init__(self, max_size):
-        self.max_size = max_size
-        self.samples = []
-
-    def push(self, *args):
-        if len(self) < self.max_size:
-            self.samples.append(args)
-        else:
-            self.samples[random.randint(0, self.max_size - 1)] = args
-
-    def sample(self, batch_size):
-        sample = random.sample(range(len(self)), batch_size)
-        return [torch.stack([self.samples[i][col] for i in sample]) for col in range(len(self.samples[0]))]
-
-    def __len__(self):
-        return len(self.samples)
 
 
 bit_length = 8

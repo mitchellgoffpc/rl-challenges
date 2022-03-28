@@ -65,3 +65,26 @@ class ReplayMemory:
 
     def __len__(self):
         return len(self.memory)
+
+
+class ReplayBuffer:
+    def __init__(self, max_size):
+        self.max_size = max_size
+        self.samples = []
+
+    def push(self, *args):
+        if len(self) < self.max_size:
+            self.samples.append(args)
+        else:
+            self.samples[random.randint(0, self.max_size - 1)] = args
+
+    def push_episode(self, episode):
+        if len(episode) > 0:
+            self.push(*[torch.stack([step[i] for step in episode]) for i in range(len(episode[0]))])
+
+    def sample(self, batch_size):
+        sample = random.sample(range(len(self)), batch_size)
+        return [torch.stack([self.samples[i][j] for i in sample]) for j in range(len(self.samples[0]))]
+
+    def __len__(self):
+        return len(self.samples)

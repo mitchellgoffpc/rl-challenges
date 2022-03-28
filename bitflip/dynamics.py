@@ -1,41 +1,9 @@
-import random
 import numpy as np
 import torch
 import torch.nn.functional as F
-from models import Encoder, Decoder, Dynamics
-from tqdm import trange
-
-
-def flip_bits(state, action):
-    next_state = state.clone()
-    next_state[action] = ~next_state[action]
-    return next_state
-
-def binary_encode(bit_length, state):
-    return torch.tensor([state >> i & 1 for i in range(bit_length)], dtype=torch.bool)
-
-
-class ReplayBuffer():
-    def __init__(self, max_size):
-        self.max_size = max_size
-        self.samples = []
-
-    def push(self, *args):
-        if len(self) < self.max_size:
-            self.samples.append(args)
-        else:
-            self.samples[random.randint(0, self.max_size - 1)] = args
-
-    def push_episode(self, episode):
-        if len(episode) > 0:
-            self.push(*[torch.stack([step[i] for step in episode]) for i in range(len(episode[0]))])
-
-    def sample(self, batch_size):
-        sample = np.random.choice(len(self), size=batch_size, replace=False)
-        return [torch.stack([self.samples[i][j] for i in sample]) for j in range(len(self.samples[0]))]
-
-    def __len__(self):
-        return len(self.samples)
+from helpers import ReplayBuffer
+from bitflip.models import Encoder, Decoder, Dynamics
+from bitflip.environment import binary_encode, flip_bits
 
 
 # Training loop
