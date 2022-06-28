@@ -1,8 +1,7 @@
 import time
-import numpy as np
 import torch
 import torch.nn.functional as F
-from helpers import ReplayBuffer
+from helpers import ReplayBuffer, mean
 from caves.models import Encoder, Decoder, Dynamics
 from caves.environment import CaveEnvironment
 
@@ -64,10 +63,10 @@ for episode_counter in range(1000):
     if episode_counter % report_every == 0:
         print(f"Episode {episode_counter:<4} | "
               f"Rooms explored: {len(environment.rooms)} | "
-              f"Dynamics error: {np.mean(dynamics_errors):.4f} | "
-              f"Decoder error: {np.mean(decoder_errors):.4f} | "
-              f"Decoder accuracy: {np.mean(decoder_old_accuracies)*100:.3f}% | "
-              f"Dynamics + Decoder accuracy: {np.mean(decoder_new_accuracies)*100:.3f}% | "
+              f"Dynamics error: {mean(dynamics_errors):.4f} | "
+              f"Decoder error: {mean(decoder_errors):.4f} | "
+              f"Decoder accuracy: {mean(decoder_old_accuracies)*100:.3f}% | "
+              f"Dynamics + Decoder accuracy: {mean(decoder_new_accuracies)*100:.3f}% | "
               f"Time Taken: {time.time() - last_report:.2f}s")
         decoder_errors, dynamics_errors, decoder_old_accuracies, decoder_new_accuracies = [], [], [], []
         last_report = time.time()

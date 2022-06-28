@@ -1,12 +1,9 @@
-import numpy as np
 import torch
 import torch.nn.functional as F
-from helpers import ReplayBuffer
+from helpers import ReplayBuffer, mean
 from bitflip.models import Encoder, Decoder, Dynamics
 from bitflip.environment import binary_encode, flip_bits
 
-
-# Training loop
 
 bit_length = 32
 hidden_size = 64
@@ -16,10 +13,11 @@ report_every = 25
 encoder = Encoder(hidden_size, bit_length)
 decoder = Decoder(hidden_size, bit_length)
 dynamics = Dynamics(hidden_size, bit_length)
-optimizer = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()) + list(dynamics.parameters()), lr=0.0003)
+optimizer = torch.optim.Adam([*encoder.parameters(), *decoder.parameters(), *dynamics.parameters()], lr=0.0003)
 
 replay_buffer = ReplayBuffer(1024)
 decoder_errors, dynamics_errors, decoder_old_accuracies, decoder_new_accuracies = [], [], [], []
+
 
 for episode_counter in range(1000):
     episode = []
@@ -54,9 +52,8 @@ for episode_counter in range(1000):
 
     if episode_counter % report_every == 0:
         print(f"Episode {episode_counter:<4} | "
-              f"Dynamics error: {np.mean(dynamics_errors):.4f} | "
-              f"Decoder error: {np.mean(decoder_errors):.4f} | "
-              f"Decoder accuracy: {np.mean(decoder_old_accuracies)*100:.3f}% | "
-              f"Dynamics + Decoder accuracy: {np.mean(decoder_new_accuracies)*100:.3f}%")
-
+              f"Dynamics error: {mean(dynamics_errors):.4f} | "
+              f"Decoder error: {mean(decoder_errors):.4f} | "
+              f"Decoder accuracy: {mean(decoder_old_accuracies)*100:.3f}% | "
+              f"Dynamics + Decoder accuracy: {mean(decoder_new_accuracies)*100:.3f}%")
         decoder_errors, dynamics_errors, decoder_old_accuracies, decoder_new_accuracies = [], [], [], []

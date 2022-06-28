@@ -1,44 +1,39 @@
 import time
-import numpy as np
 import torch
 import torch.nn.functional as F
-import warnings
-from helpers import ReplayBuffer
+from helpers import ReplayBuffer, mean
 from bitflip.models import BitflipAgent, Encoder, Decoder, Dynamics
 from bitflip.environment import build_example, flip_bits
-warnings.simplefilter("ignore") # silence 'mean of empty slice' warning
 
 
-bit_length = 8
+bit_length = 24
 agent_hidden_size = 128
-dynamics_hidden_size = 64
-agent_bs = 512
-dynamics_bs = 64
-report_every = 1000
-num_episodes = 20000
-max_episode_length = bit_length * 2
-max_dream_length = 4
+dynamics_hidden_size = 128
+agent_batch_size = 512
+dynamics_batch_size = 64
+num_episodes = 100000
+max_episode_length = bit_length # * 3//2
+max_dream_length = 3
+report_every = 100
 
 agent = BitflipAgent(agent_hidden_size, dynamics_hidden_size, bit_length)
-agent_optimizer = torch.optim.Adam(agent.parameters(), lr=0.0003)
-
 encoder = Encoder(dynamics_hidden_size, bit_length)
 decoder = Decoder(dynamics_hidden_size, bit_length)
 dynamics = Dynamics(dynamics_hidden_size, bit_length)
-dynamics_optimizer = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()) + list(dynamics.parameters()), lr=0.0003)
+agent_optimizer = torch.optim.Adam(agent.parameters(), lr=0.0003)
+dynamics_optimizer = torch.optim.Adam([*encoder.parameters(), *decoder.parameters(), *dynamics.parameters()], lr=0.0003)
 
-agent_replay_buffer = ReplayBuffer(16000)
+agent_replay_buffer = ReplayBuffer(32000)
 dynamics_replay_buffer = ReplayBuffer(1024)
 real_wins, dream_wins, dreams, episode_lengths = 0, 0, 0, []
 decoder_errors, dynamics_errors, dynamics_accuracies = [], [], []
 rolling_dynamics_error = 1.0
+dream_success_rate = 0.0
 last_report = time.time()
 
 
-# Training loop
-
 for episode_counter in range(1, num_episodes + 1):
-    epsilon = max(0.00, 1. - 3 * float(episode_counter) / num_episodes)
+    epsilon = max(0.00, 1. - 10 * float(episode_counter) / num_episodes)
 
     # Play an episode
     episode = []
@@ -75,22 +70,22 @@ for episode_counter in range(1, num_episodes + 1):
 
 
     # Train the agent on real episodes
-    # if len(agent_replay_buffer) > agent_bs:
-    #     states, goals, actions, next_states, finished = agent_replay_buffer.sample(agent_bs)
-    #
-    #     with torch.no_grad():
-    #         features, next_features, goal_features = encoder(states), encoder(next_states), encoder(goals)
-    #         best_future_distances = torch.clip(agent(next_features, goal_features).min(dim=1).values * ~finished, 0, bit_length)
-    #     distances = agent(features, goal_features)[torch.arange(len(actions)), actions]
-    #     loss = F.smooth_l1_loss(distances, best_future_distances + 1)
-    #     loss.backward()
-    #
-    #     agent_optimizer.step()
-    #     agent_optimizer.zero_grad()
+    if len(agent_replay_buffer) > agent_batch_size:
+        states, goals, actions, next_states, finished = agent_replay_buffer.sample(agent_batch_size)
+
+        with torch.no_grad():
+            features, next_features, goal_features = encoder(states), encoder(next_states), encoder(goals)
+            best_future_distances = torch.clip(agent(next_features, goal_features).min(dim=1).values * ~finished, 0, bit_length)
+        distances = agent(features, goal_features)[torch.arange(len(actions)), actions]
+        loss = F.smooth_l1_loss(distances, best_future_distances + 1)
+        loss.backward()
+
+        agent_optimizer.step()
+        agent_optimizer.zero_grad()
 
     # Train the agent on dream episodes
-    if len(agent_replay_buffer) > agent_bs:
-        states, _, _, _, _ = agent_replay_buffer.sample(agent_bs)
+    if len(agent_replay_buffer) > agent_batch_size:
+        states, _, _, _, _ = agent_replay_buffer.sample(agent_batch_size)
         with torch.no_grad():
             features = encoder(states)
 
@@ -129,17 +124,22 @@ for episode_counter in range(1, num_episodes + 1):
         agent_optimizer.zero_grad()
         dream_wins += finished.sum()
         dreams += len(finished)
+        dream_success_rate = 0.99 * dream_success_rate + 0.01 * (dream_wins / dreams)
+        if dream_success_rate > .95 and max_dream_length < bit_length // 2:
+            print(f"Bumping max_dream_length to {max_dream_length + 1}")
+            dream_success_rate = 0.0
+            max_dream_length += 1
 
     # Train the dynamics model
-    if len(dynamics_replay_buffer) > dynamics_bs:
-        if rolling_dynamics_error > .0001:
+    if len(dynamics_replay_buffer) > dynamics_batch_size:
+        if rolling_dynamics_error > .0002:
               dynamics_updates = 8
         elif rolling_dynamics_error > .00005:
               dynamics_updates = 1
         else: dynamics_updates = 0
 
         for _ in range(dynamics_updates):
-            states, actions, next_states, mask = dynamics_replay_buffer.sample(dynamics_bs)
+            states, actions, next_states, mask = dynamics_replay_buffer.sample(dynamics_batch_size)
             features = encoder(states)
             next_features = encoder(next_states)
             next_feature_preds = dynamics(actions, features[:,0])
@@ -165,10 +165,10 @@ for episode_counter in range(1, num_episodes + 1):
               f"Epsilon: {epsilon:<4.2f} | "
               f"Real Wins: {real_wins:>4} / {report_every} | "
               f"Dream Wins: {dream_wins:>4} / {dreams} | "
-              f"Avg Episode Length: {np.mean(episode_lengths):.2f} | "
-              f"Decoder error: {np.mean(decoder_errors):<6.5f} | "
-              f"Dynamics error: {np.mean(dynamics_errors):<6.5f} | "
-              f"Dynamics accuracy: {np.mean(dynamics_accuracies)*100:>6.2f}% | "
+              f"Avg Episode Length: {mean(episode_lengths):.2f} | "
+              f"Decoder error: {mean(decoder_errors):<6.5f} | "
+              f"Dynamics error: {mean(dynamics_errors):<6.5f} | "
+              f"Dynamics accuracy: {mean(dynamics_accuracies)*100:>6.2f}% | "
               f"Time Taken: {time.time() - last_report:.2f}s")
         real_wins, dream_wins, dreams, episode_lengths = 0, 0, 0, []
         decoder_errors, dynamics_errors, dynamics_accuracies = [], [], []

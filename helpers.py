@@ -1,5 +1,9 @@
 import torch
 import random
+import collections
+
+def mean(x):
+    return sum(x) / len(x) if x else float('nan')
 
 
 class Episode:
@@ -85,6 +89,28 @@ class ReplayBuffer:
     def sample(self, batch_size):
         sample = random.sample(range(len(self)), batch_size)
         return [torch.stack([self.samples[i][j] for i in sample]) for j in range(len(self.samples[0]))]
+
+    def __len__(self):
+        return len(self.samples)
+
+
+class InfiniteReplayBuffer:
+    def __init__(self, max_size):
+        self.max_size = max_size
+        self.samples = collections.deque()
+
+    def push(self, *args):
+        if len(self) > self.max_size:
+            self.samples.popleft()
+        self.samples.append(args)
+
+    def sample(self, batch_size, temporal_len):
+        start_idxs = torch.randint(0, len(self.samples) - temporal_len, size=(batch_size,))
+        return [torch.stack([
+                    torch.stack([self.samples[start_idxs[i]+j][col]
+                        for j in range(temporal_len)])
+                    for i in range(batch_size)])
+                for col in range(len(self.samples[0]))]
 
     def __len__(self):
         return len(self.samples)
