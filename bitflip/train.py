@@ -6,13 +6,13 @@ from bitflip.models import BitflipAgent, Encoder, Decoder, Dynamics
 from bitflip.environment import build_example, flip_bits
 
 
-bit_length = 24
+bit_length = 8
 agent_hidden_size = 128
-dynamics_hidden_size = 128
+dynamics_hidden_size = 64
 agent_batch_size = 512
-dynamics_batch_size = 64
-num_episodes = 100000
-max_episode_length = bit_length # * 3//2
+dynamics_batch_size = 128
+num_episodes = 20000
+max_episode_length = bit_length * 3//2
 max_dream_length = 3
 report_every = 100
 
@@ -20,8 +20,9 @@ agent = BitflipAgent(agent_hidden_size, dynamics_hidden_size, bit_length)
 encoder = Encoder(dynamics_hidden_size, bit_length)
 decoder = Decoder(dynamics_hidden_size, bit_length)
 dynamics = Dynamics(dynamics_hidden_size, bit_length)
+logit_scale = torch.nn.Parameter(torch.ones([]) * torch.log(torch.tensor(1 / 0.07)))
 agent_optimizer = torch.optim.Adam(agent.parameters(), lr=0.0003)
-dynamics_optimizer = torch.optim.Adam([*encoder.parameters(), *decoder.parameters(), *dynamics.parameters()], lr=0.0003)
+dynamics_optimizer = torch.optim.Adam([*encoder.parameters(), *decoder.parameters(), *dynamics.parameters(), logit_scale], lr=0.0003)
 
 agent_replay_buffer = ReplayBuffer(32000)
 dynamics_replay_buffer = ReplayBuffer(1024)
@@ -33,7 +34,7 @@ last_report = time.time()
 
 
 for episode_counter in range(1, num_episodes + 1):
-    epsilon = max(0.00, 1. - 10 * float(episode_counter) / num_episodes)
+    epsilon = max(0.00, 1. - 3 * float(episode_counter) / num_episodes)
 
     # Play an episode
     episode = []
@@ -70,18 +71,18 @@ for episode_counter in range(1, num_episodes + 1):
 
 
     # Train the agent on real episodes
-    if len(agent_replay_buffer) > agent_batch_size:
-        states, goals, actions, next_states, finished = agent_replay_buffer.sample(agent_batch_size)
-
-        with torch.no_grad():
-            features, next_features, goal_features = encoder(states), encoder(next_states), encoder(goals)
-            best_future_distances = torch.clip(agent(next_features, goal_features).min(dim=1).values * ~finished, 0, bit_length)
-        distances = agent(features, goal_features)[torch.arange(len(actions)), actions]
-        loss = F.smooth_l1_loss(distances, best_future_distances + 1)
-        loss.backward()
-
-        agent_optimizer.step()
-        agent_optimizer.zero_grad()
+    # if len(agent_replay_buffer) > agent_batch_size:
+    #     states, goals, actions, next_states, finished = agent_replay_buffer.sample(agent_batch_size)
+    #
+    #     with torch.no_grad():
+    #         features, next_features, goal_features = encoder(states), encoder(next_states), encoder(goals)
+    #         best_future_distances = torch.clip(agent(next_features, goal_features).min(dim=1).values * ~finished, 0, bit_length)
+    #     distances = agent(features, goal_features)[torch.arange(len(actions)), actions]
+    #     loss = F.smooth_l1_loss(distances, best_future_distances + 1)
+    #     loss.backward()
+    #
+    #     agent_optimizer.step()
+    #     agent_optimizer.zero_grad()
 
     # Train the agent on dream episodes
     if len(agent_replay_buffer) > agent_batch_size:
@@ -125,16 +126,16 @@ for episode_counter in range(1, num_episodes + 1):
         dream_wins += finished.sum()
         dreams += len(finished)
         dream_success_rate = 0.99 * dream_success_rate + 0.01 * (dream_wins / dreams)
-        if dream_success_rate > .95 and max_dream_length < bit_length // 2:
-            print(f"Bumping max_dream_length to {max_dream_length + 1}")
-            dream_success_rate = 0.0
-            max_dream_length += 1
+        # if dream_success_rate > .95 and max_dream_length < bit_length // 2:
+        #     print(f"Bumping max_dream_length to {max_dream_length + 1}")
+        #     dream_success_rate = 0.0
+        #     max_dream_length += 1
 
     # Train the dynamics model
     if len(dynamics_replay_buffer) > dynamics_batch_size:
-        if rolling_dynamics_error > .0002:
+        if rolling_dynamics_error > .0001:
               dynamics_updates = 8
-        elif rolling_dynamics_error > .00005:
+        elif rolling_dynamics_error > .00002:
               dynamics_updates = 1
         else: dynamics_updates = 0
 
@@ -143,12 +144,22 @@ for episode_counter in range(1, num_episodes + 1):
             features = encoder(states)
             next_features = encoder(next_states)
             next_feature_preds = dynamics(actions, features[:,0])
-            state_preds = decoder(features)
-            next_state_preds = decoder(next_features)
+            state_preds = decoder(features.detach())
+            next_state_preds = decoder(next_features.detach())
 
             dynamics_loss = F.mse_loss(next_feature_preds[mask], next_features[mask])
             decoder_loss = F.mse_loss(state_preds[mask], states[mask].float()) + F.mse_loss(next_state_preds[mask], next_states[mask].float())
-            loss = dynamics_loss + decoder_loss
+
+            i = torch.randint(0, 12, (len(features),))
+            feats, nfeats = features[torch.arange(len(features)),i], next_features[torch.arange(len(features)),i]
+            feats = feats / feats.norm(dim=-1, keepdim=True)
+            nfeats = nfeats / nfeats.norm(dim=-1, keepdim=True)
+            logits = logit_scale.exp() * feats @ nfeats.t()
+            targets = torch.arange(0, len(feats)).long()
+            contrastive_loss = F.cross_entropy(logits, targets)
+            # contrastive_loss = (F.nll_loss(F.log_softmax(logits, dim=0), targets) + F.nll_loss(F.log_softmax(logits, dim=1), targets)) / 2
+
+            loss = dynamics_loss + decoder_loss + contrastive_loss
             loss.backward()
             dynamics_optimizer.step()
             dynamics_optimizer.zero_grad()
