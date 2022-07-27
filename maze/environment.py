@@ -2,6 +2,8 @@ import random
 import torch
 import numpy as np
 
+np.random.seed(0)
+
 def make_maze(w, h):
     visited = np.ones((h+1, w+1), dtype=bool)
     visited[:h, :w] = False
@@ -33,12 +35,14 @@ class MazeEnvironment:
     def __init__(self, w, h):
         self.w, self.h = w, h
         self.walls = make_maze(w, h)
-        self.start = (random.randrange(self.w), random.randrange(self.h))
-        self.target = (random.randrange(self.w), random.randrange(self.h))
+        # self.start = (random.randrange(self.w), random.randrange(self.h))
+        # self.target = (random.randrange(self.w), random.randrange(self.h))
         self.reset()
 
     def reset(self):
-        self.position = self.start
+        # self.position = self.start
+        self.position = (random.randrange(self.w), random.randrange(self.h))
+        self.target = (random.randrange(self.w), random.randrange(self.h))
         return self.get_observation()
 
     def step(self, action):
@@ -50,8 +54,8 @@ class MazeEnvironment:
             return self.get_observation(), 1, True, self.get_info()
         return self.get_observation(), 0, False, self.get_info()
 
-    def get_observation(self):
-        x, y = self.position
+    def get_observation(self, position=None):
+        x, y = position or self.position
         position_obs = np.zeros((self.h, self.w, 1), dtype=bool)
         position_obs[y, x] = True
         return torch.as_tensor(np.concatenate([self.walls, position_obs], axis=-1))

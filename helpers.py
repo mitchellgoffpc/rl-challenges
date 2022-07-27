@@ -1,9 +1,18 @@
-import torch
 import random
 import collections
+import torch
+import torch.nn.functional as F
 
 def mean(x):
     return sum(x) / len(x) if x else float('nan')
+
+def normalize(feats):
+    return feats / feats.norm(dim=-1, keepdim=True)
+
+def get_contrastive_loss(feats, nfeats, logit_scale):
+    logits = logit_scale.exp() * normalize(feats) @ normalize(nfeats).t()
+    targets = torch.arange(0, len(feats)).long()
+    return  F.nll_loss(F.log_softmax(logits, dim=0), targets) + F.nll_loss(F.log_softmax(logits, dim=1), targets)
 
 
 class Episode:

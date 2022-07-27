@@ -26,7 +26,7 @@ class Encoder(nn.Module):
         self.fc2 = nn.Linear(hidden_size, hidden_size)
 
     def forward(self, x):
-        x = F.relu(self.fc1(x.float().flatten(start_dim=2)))
+        x = F.relu(self.fc1(x.float().flatten(start_dim=-3)))
         return self.fc2(x)
 
 class Decoder(nn.Module):
@@ -50,3 +50,14 @@ class Dynamics(nn.Module):
         inputs = F.relu(self.embeddings(actions))
         outputs, _ = self.gru(inputs, hidden_state[None])
         return outputs
+
+class Finished(nn.Module):
+    def __init__(self, hidden_size, feature_size):
+        super().__init__()
+        self.fc1 = nn.Linear(feature_size * 2, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, 1)
+
+    def forward(self, inputs, goals):
+        input = torch.cat((inputs, goals), dim=1).float()
+        x = F.relu(self.fc1(input))
+        return self.fc2(x)
