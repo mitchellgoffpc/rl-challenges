@@ -7,14 +7,14 @@ from maze.models import MazeAgent, Encoder, Decoder, Dynamics, NUM_ACTIONS
 from maze.environment import MazeEnvironment
 
 
-grid_w, grid_h = 3,3
-agent_hidden_size = 128
-dynamics_hidden_size = 64
+grid_w, grid_h = 5,5
+agent_hidden_size = 256
+dynamics_hidden_size = 128
 agent_batch_size = 512
 dynamics_batch_size = 64
-num_episodes = 10000
-max_episode_length = 10
-max_dream_length = 3
+num_episodes = 20000
+max_episode_length = 20
+max_dream_length = 5
 report_every = 100
 
 agent = MazeAgent(agent_hidden_size, dynamics_hidden_size)
@@ -43,7 +43,7 @@ def env_step(state, action):
 
 
 for episode_counter in range(1, num_episodes + 1):
-    epsilon = max(0.00, 1. - 2 * float(episode_counter) / num_episodes)
+    epsilon = 0.1 # max(0.00, 1. - 2 * float(episode_counter) / num_episodes)
 
     # Play an episode
     episode = []
@@ -86,7 +86,7 @@ for episode_counter in range(1, num_episodes + 1):
     #
     #     with torch.no_grad():
     #         features, next_features, goal_features = encoder(states), encoder(next_states), encoder(goals)
-    #         best_future_distances = torch.clip(agent(next_features, goal_features).min(dim=1).values * ~finished, 0, max_episode_length)
+    #         best_future_distances = torch.clip(agent(next_features, goal_features).min(dim=1).values * ~finished, 0, max_episode_length+1)
     #     distances = agent(features, goal_features)[torch.arange(len(actions)), actions]
     #     loss = F.smooth_l1_loss(distances, best_future_distances + 1)
     #     loss.backward()
@@ -110,14 +110,34 @@ for episode_counter in range(1, num_episodes + 1):
 
         # Multi-step
         with torch.no_grad():
-            goals, goal_features = states, features
-            for i in range(max_dream_length):
-                actions = torch.randint(0, NUM_ACTIONS, (len(goals),))
-                goal_features = dynamics(actions[:,None], goal_features)[:,0]
-                goals = torch.as_tensor(np.stack([env_step(goals[j], actions[j]) for j in range(agent_batch_size)], axis=0))
+            goal_indices = torch.randint(0, len(states), size=(len(states), 8))
+            goals, goal_features = states[goal_indices], features[goal_indices]
+            b,n,f = goal_features.shape
+            distances = agent(features[:,None].repeat(1,8,1).view(b*n,f), goal_features.view(b*n,f)).view(b,n,-1).min(dim=2).values
+            probs = F.softmax(1 / (1 + torch.abs(.8*max_dream_length - distances)), dim=1)
+            goal_indices = torch.argmax((probs.cumsum(dim=1) > torch.rand(len(states), 1)).int(), dim=1)
+            goal_features = goal_features[torch.arange(len(states)), goal_indices]
+            goals = goals[torch.arange(len(states)), goal_indices]
+
+            # mask = torch.rand(len(goals)) > 0.5
+            # for i in range(max_dream_length * 3):
+            #     actions = torch.randint(0, NUM_ACTIONS, (len(goals),))
+            #     # best_actions = torch.argmax(agent(goal_features, features), dim=1)
+            #     # actions = torch.where(mask, rand_actions, best_actions)
+            #     # goal_features = dynamics(actions[:,None], goal_features)[:,0]
+            #     goals = torch.as_tensor(np.stack([env_step(goals[j], actions[j]) for j in range(agent_batch_size)], axis=0))
+            # goal_features = encoder(goals)
+
+            # goals = []
+            # import random
+            # for _ in range(agent_batch_size):
+            #     env.position = (random.randrange(3), random.randrange(3))
+            #     goals.append(torch.as_tensor(env.get_observation()))
+            # goals = torch.stack(goals)
+            # goal_features = encoder(goals)
 
         finished = torch.zeros(len(features)).bool()
-        for i in range(max_dream_length*3):
+        for i in range(max_dream_length):
             distances = agent(features, goal_features)
             actions = torch.where(
                 torch.rand((len(states),)) > epsilon,
@@ -127,7 +147,7 @@ for episode_counter in range(1, num_episodes + 1):
             states = torch.where(finished[:,None,None,None], states, new_states)
             finished = finished | torch.all(states.flatten(start_dim=1) == goals.flatten(start_dim=1), dim=1)
             with torch.no_grad():
-                features = torch.where(finished[:,None], features, dynamics(actions[:,None], features)[:,0])
+                features = torch.where(finished[:,None], features, encoder(states))
                 best_future_distances = torch.clip(agent(features, goal_features).min(dim=1).values * ~finished, 0, max_dream_length+1)
             loss = F.smooth_l1_loss(distances[torch.arange(len(actions)), actions], best_future_distances + 1)
             loss.backward()
@@ -136,17 +156,18 @@ for episode_counter in range(1, num_episodes + 1):
         agent_optimizer.zero_grad()
         dream_wins += finished.sum()
         dreams += agent_batch_size
-        dream_success_rate = 0.99 * dream_success_rate + 0.01 * (dream_wins / dreams)
-        if dream_success_rate > .9:
+        dream_success_rate = 0.998 * dream_success_rate + 0.002 * (dream_wins / dreams)
+        if dream_success_rate > .4 and max_dream_length < max_episode_length:
             print(f"Bumping max_dream_length to {max_dream_length + 1}")
             dream_success_rate = 0.0
             max_dream_length += 1
 
     # Train the dynamics model
     if len(dynamics_replay_buffer) > dynamics_batch_size:
-        if rolling_dynamics_error > .0001:
+        # if rolling_dynamics_error > .0001:
+        if episode_counter < 1000:
               dynamics_updates = 8
-        else: dynamics_updates = 1
+        else: dynamics_updates = 0
 
         for _ in range(dynamics_updates):
             states, actions, next_states, mask = dynamics_replay_buffer.sample(dynamics_batch_size)

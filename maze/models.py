@@ -22,12 +22,16 @@ class MazeAgent(nn.Module):
 class Encoder(nn.Module):
     def __init__(self, hidden_size, width, height):
         super().__init__()
+        # self.conv = nn.Conv2d(5, 16, 1)
+        # self.fc1 = nn.Linear(width*height*16, hidden_size)
         self.fc1 = nn.Linear(width*height*NUM_CHANNELS, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
 
     def forward(self, x):
+        *b,h,w,c = x.shape
+        # x = F.relu(self.conv(x.view(-1,h,w,c).permute(0,3,1,2).float()))
         x = F.relu(self.fc1(x.float().flatten(start_dim=-3)))
-        return self.fc2(x)
+        return self.fc2(x).view(*b,-1)
 
 class Decoder(nn.Module):
     def __init__(self, hidden_size, width, height):
