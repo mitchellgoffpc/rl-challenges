@@ -1,0 +1,6 @@
+# Junk
+.DS_Store
+__pycache__/
+
+# ROMs
+mario.nes
