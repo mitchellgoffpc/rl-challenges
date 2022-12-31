@@ -9,9 +9,9 @@ def mean(x):
 def normalize(feats):
     return feats / feats.norm(dim=-1, keepdim=True)
 
-def get_contrastive_loss(feats, nfeats, logit_scale):
+def get_contrastive_loss(feats, nfeats, logit_scale, device=torch.device('cpu')):
     logits = logit_scale.exp() * normalize(feats) @ normalize(nfeats).t()
-    targets = torch.arange(0, len(feats)).long()
+    targets = torch.arange(0, len(feats), device=device).long()
     return  F.nll_loss(F.log_softmax(logits, dim=0), targets) + F.nll_loss(F.log_softmax(logits, dim=1), targets)
 
 

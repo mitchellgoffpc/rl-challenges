@@ -1,11 +1,18 @@
+import os
 import torch
-from nes import NES
+from nes_py import NESEnv
 
-class MarioEnvironment:
+class MarioEnv:
   def __init__(self):
-    self.nes = NES("mario.nes", headless=True, verbose=False, sync_mode=0)
-    self.nes.run_frame_headless(run_frames=60)
-    self.nes.run_frame_headless(run_frames=180, controller1_state=[0,0,0,1,0,0,0,0])
+    self.nes = NESEnv(os.path.join(os.path.dirname(__file__), "roms/mario.nes"))
+
+  def reset(self):
+    self.nes.reset()
+    for _ in range(60):
+      self.nes.step(0)
+    for _ in range(180):
+      frame, *_ = self.nes.step(1 << 3)
+    return frame
 
   def step(self, action):
-    return torch.as_tensor(self.nes.run_frame_headless(run_frames=1, controller1_state=action.tolist())).permute(2,0,1)
+    return self.nes.step(action)

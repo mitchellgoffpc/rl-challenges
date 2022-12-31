@@ -1,17 +1,16 @@
+import sys
 import time
 import pygame
-from nes import NES
+from environment import MarioEnv
+
+def get_action(keys):
+  return sum((1 << i) * k for i, k in enumerate(keys))
 
 pygame.init()
-screen = pygame.display.set_mode((240, 224))
+screen = pygame.display.set_mode((256, 240)) # (240, 224)
 
-nes = NES("mario.nes", headless=True, verbose=False, sync_mode=0)
-frame = nes.run_frame_headless(run_frames=60)
-pygame.surfarray.blit_array(screen, frame.swapaxes(0, 1))
-pygame.display.flip()
-time.sleep(1)
-
-frame = nes.run_frame_headless(run_frames=180, controller1_state=[0,0,0,1,0,0,0,0])
+env = MarioEnv()
+frame = env.reset()
 pygame.surfarray.blit_array(screen, frame.swapaxes(0, 1))
 pygame.display.flip()
 
@@ -26,12 +25,14 @@ while running:
       for i, key in enumerate(keymap):
         if event.key == key:
           keys[i] = 1
+      if event.key == pygame.K_r:
+        env.reset()
     elif event.type == pygame.KEYUP:
       for i, key in enumerate(keymap):
         if event.key == key:
           keys[i] = 0
 
-  frame = nes.run_frame_headless(run_frames=1, controller1_state=keys)
+  frame, _, _, _ = env.step(get_action(keys))
   pygame.surfarray.blit_array(screen, frame.swapaxes(0, 1))
   pygame.display.flip()
   time.sleep(0.01)
