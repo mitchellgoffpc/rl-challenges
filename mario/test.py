@@ -7,7 +7,7 @@ def get_action(keys):
   return sum((1 << i) * k for i, k in enumerate(keys))
 
 pygame.init()
-screen = pygame.display.set_mode((256, 240)) # (240, 224)
+screen = pygame.display.set_mode((256, 240))
 
 env = MarioEnv()
 frame = env.reset()
